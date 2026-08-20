@@ -22,7 +22,7 @@ if [ ! -d NeMo ]; then
   git clone --depth 1 https://github.com/NVIDIA/NeMo.git
 fi
 pip install -e "./NeMo[tts]"
-pip install "huggingface_hub[cli]"
+pip install "huggingface_hub[cli]" peft
 
 # --- Pretrained checkpoint ---------------------------------------------------
 mkdir -p checkpoints

@@ -23,12 +23,14 @@ the stock architecture.
 """
 
 import math
+import tarfile
+from pathlib import Path
 
 import lightning.pytorch as pl
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, open_dict
 from torch import nn
 
 from nemo.collections.tts.models import MagpieTTSModel
@@ -85,17 +87,92 @@ def freeze_non_lora(model: nn.Module, extra_trainable) -> None:
             p.requires_grad = False
 
 
+def extract_nemo(nemo_path: str, out_dir: Path) -> Path:
+    """Unpack a .nemo archive (model_config.yaml, model_weights.ckpt, artifacts)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if not (out_dir / "model_weights.ckpt").exists():
+        with tarfile.open(nemo_path) as tar:
+            tar.extractall(out_dir, filter="data")
+    return out_dir
+
+
+def build_tokenizer_roster(extracted: Path, hebrew_name: str = "hebrew_chartokenizer"):
+    """The checkpoint's exact text_tokenizers (artifact paths resolved), with a
+    new byte-level Hebrew tokenizer appended LAST so all pretrained token-ID
+    offsets are preserved."""
+    ckpt_cfg = OmegaConf.load(extracted / "model_config.yaml")
+    tokenizers = OmegaConf.to_container(ckpt_cfg.text_tokenizers, resolve=True)
+
+    def resolve(v):
+        if isinstance(v, str) and v.startswith("nemo:"):
+            return str(extracted / v[len("nemo:"):])
+        if isinstance(v, dict):
+            return {k: resolve(x) for k, x in v.items()}
+        return v
+
+    tokenizers = {name: resolve(t) for name, t in tokenizers.items()}
+    assert hebrew_name not in tokenizers
+    tokenizers[hebrew_name] = {"_target_": "AutoTokenizer", "pretrained_model": "google/byt5-small"}
+    return OmegaConf.create(tokenizers)
+
+
+def load_pretrained_weights(model: MagpieTTSModel, extracted: Path):
+    """Load checkpoint weights, padding text_embedding for the appended Hebrew
+    tokenizer block (new rows keep the model's fresh initialization)."""
+    sd = torch.load(extracted / "model_weights.ckpt", map_location="cpu", weights_only=False)
+    if not isinstance(sd, dict) or "text_embedding.weight" not in sd:
+        sd = sd.get("state_dict", sd)
+    ckpt_emb = sd["text_embedding.weight"]
+    model_emb = model.text_embedding.weight.data
+    if model_emb.shape[0] < ckpt_emb.shape[0]:
+        raise RuntimeError(f"model text_embedding {model_emb.shape} smaller than checkpoint {ckpt_emb.shape}")
+    padded = model_emb.clone()
+    padded[: ckpt_emb.shape[0]] = ckpt_emb
+    sd["text_embedding.weight"] = padded
+    logging.info(
+        f"text_embedding: {ckpt_emb.shape[0]} pretrained rows + "
+        f"{model_emb.shape[0] - ckpt_emb.shape[0]} new Hebrew rows"
+    )
+    model.load_state_dict(sd, strict=True)
+
+
 @hydra_runner(config_path="conf/magpietts", config_name="magpietts")
 def main(cfg):
-    logging.info('\nConfig Params:\n%s', OmegaConf.to_yaml(cfg, resolve=True))
     mp.set_start_method("spawn", force=True)
 
+    nemo_path = cfg.get("init_from_nemo_model")
+    if nemo_path is None:
+        raise ValueError("pass +init_from_nemo_model=/path/to/model.nemo")
+    extracted = extract_nemo(nemo_path, Path(nemo_path).parent / "extracted")
+
+    # The stock yaml's architecture defaults don't match the released checkpoint
+    # (frame stacking, codebook count, ...). Use the checkpoint's own model config
+    # as the base and overlay only training-specific keys from our yaml/CLI.
+    ours = OmegaConf.to_container(cfg.model, resolve=True)
+    ckpt_model = OmegaConf.to_container(OmegaConf.load(extracted / "model_config.yaml"), resolve=True)
+    for key in [
+        "train_ds", "validation_ds", "optim", "codecmodel_path",
+        "context_duration_min", "context_duration_max", "alignment_loss_scale",
+        "prior_scaling_factor", "load_cached_codes_if_available",
+        "max_epochs", "steps_per_epoch", "cfg_unconditional_prob",
+    ]:
+        if key in ours:
+            ckpt_model[key] = ours[key]
+        else:
+            ckpt_model.pop(key, None)
+    with open_dict(cfg):
+        cfg.model = OmegaConf.create(ckpt_model)
+        # The checkpoint's full tokenizer roster + Hebrew appended last.
+        cfg.model.text_tokenizers = build_tokenizer_roster(extracted)
+        del cfg["init_from_nemo_model"]  # weights are loaded manually below
+
+    logging.info('\nConfig Params:\n%s', OmegaConf.to_yaml(cfg, resolve=True))
     trainer = pl.Trainer(**cfg.trainer)
     trainer.callbacks.append(pl.callbacks.LearningRateMonitor(logging_interval='step', log_weight_decay=True))
     exp_manager(trainer, cfg.get("exp_manager", None))
 
     model = MagpieTTSModel(cfg=cfg.model, trainer=trainer)
-    model.maybe_init_from_pretrained_checkpoint(cfg=cfg)
+    load_pretrained_weights(model, extracted)
 
     lora_cfg = cfg.get("lora", OmegaConf.create({}))
     r = int(lora_cfg.get("r", 16))

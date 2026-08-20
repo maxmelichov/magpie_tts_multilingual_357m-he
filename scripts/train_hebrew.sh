@@ -44,7 +44,7 @@ exec "$REPO_ROOT/venv/bin/python" "$REPO_ROOT/scripts/magpietts_lora.py" \
     +lora.r="$LORA_R" \
     +lora.alpha="$LORA_ALPHA" \
     exp_manager.exp_dir="$REPO_ROOT/experiments" \
-    +exp_manager.checkpoint_callback_params.save_top_k=3 \
+    ++exp_manager.checkpoint_callback_params.save_top_k=3 \
     \
     +model.text_tokenizers.hebrew_chartokenizer._target_=AutoTokenizer \
     +model.text_tokenizers.hebrew_chartokenizer.pretrained_model="google/byt5-small" \
@@ -52,8 +52,8 @@ exec "$REPO_ROOT/venv/bin/python" "$REPO_ROOT/scripts/magpietts_lora.py" \
     "${DS_ARGS[@]}" \
     \
     model.codecmodel_path=nvidia/nemo-nano-codec-22khz-1.89kbps-21.5fps \
-    model.context_duration_min=5.0 \
-    model.context_duration_max=5.0 \
+    model.context_duration_min=10.0 \
+    model.context_duration_max=10.0 \
     model.alignment_loss_scale=0.0 \
     model.prior_scaling_factor=null \
     model.optim.lr="$LR" \

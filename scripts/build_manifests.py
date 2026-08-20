@@ -108,6 +108,7 @@ def build_dataset(name, audio_dir: Path, csv_path: Path, text_col: str, args, ou
             ctx = rng.choice(ctx_pool)
         e["context_audio_filepath"] = ctx["audio_filepath"]
         e["context_text"] = ctx["text"]
+        e["context_audio_duration"] = ctx["duration"]
 
     rng.shuffle(entries)
     n_val = min(args.val_size, max(1, len(entries) // 20))
