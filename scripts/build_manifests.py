@@ -38,9 +38,14 @@ DATASETS = {
     "voice3": ("generated_audio/voice3_high_quality", "generated_audio/voice3_improved_phonemes.csv", "original_phonemes"),
 }
 
+# All 12 slow_44K speakers are Hebrew IPA with the same filtered-CSV schema.
+SLOW44K_SPEAKERS = [
+    "female1_hebrew", "female1", "female2", "female3", "female4", "female5",
+    "male1_hebrew", "male1", "male2", "male3", "male4", "male5",
+]
 SLOW44K_DATASETS = {
-    "female1_hebrew": ("slow_44K/data/female1_hebrew_slow", "slow_44K/female1_hebrew_slow_filtered.csv", "original_phonemes"),
-    "male1_hebrew": ("slow_44K/data/male1_hebrew_slow", "slow_44K/male1_hebrew_slow_filtered.csv", "original_phonemes"),
+    spk: (f"slow_44K/data/{spk}_slow", f"slow_44K/{spk}_slow_filtered.csv", "original_phonemes")
+    for spk in SLOW44K_SPEAKERS
 }
 
 
@@ -127,7 +132,8 @@ def main():
     ap.add_argument("--max-dur", type=float, default=20.0, help="matches MagpieTTS dataset max_duration")
     ap.add_argument("--context-min-dur", type=float, default=5.0, help="min duration of the voice-cloning context wav")
     ap.add_argument("--val-size", type=int, default=100, help="val utterances per voice (capped at 5%% of data)")
-    ap.add_argument("--include-slow44k", action="store_true", help="also build manifests for the slow_44K Hebrew speakers")
+    ap.add_argument("--include-slow44k", action=argparse.BooleanOptionalAction, default=True,
+                    help="also build manifests for the 12 slow_44K Hebrew speakers")
     ap.add_argument("--workers", type=int, default=32)
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()

@@ -50,11 +50,29 @@ venv/bin/python scripts/infer_hebrew.py \
   --out-dir outputs/test1
 ```
 
-## Key hyperparameters (per NeMo fine-tuning docs)
+## LoRA
+
+NeMo MagpieTTS has no built-in PEFT, so `scripts/magpietts_lora.py` implements it:
+LoRA adapters (default r=16, α=32) are injected into the attention projections
+(`qkv_net`, `o_net`, `q_net`, `kv_net`) of the encoder/decoder/local transformer,
+and everything else is frozen **except the text embeddings** (Hebrew byte tokens are
+new to the model, so `text_embedding` must train). Checkpoints contain base + LoRA
+weights; fold them for stock-architecture inference with:
+
+```bash
+venv/bin/python scripts/merge_lora.py --ckpt <run>/checkpoints/<best>.ckpt --out merged.ckpt
+```
+
+Tune via env (`LORA_R`, `LORA_ALPHA`) or hydra (`+lora.dropout=0.05`,
+`"+lora.targets=[...]"`). `scripts/ds_meta_args.py` generates the per-dataset hydra
+overrides from `data/manifests/datasets.json` (15 Hebrew datasets: 3 Knesset voices +
+12 slow_44K speakers).
+
+## Key hyperparameters
 
 | setting | value | why |
 |---|---|---|
-| `model.optim.lr` | `1e-5`, no schedule | new-language fine-tune of a converged model |
+| `model.optim.lr` | `1e-4`, no schedule | standard LoRA LR (use `1e-5` for full fine-tune) |
 | `model.alignment_loss_scale` / `prior_scaling_factor` | `0.0` / `null` | alignment prior over-constrains fine-tuning |
 | `trainer.precision` | `32` | fine-tuning stability |
 | `model.context_duration_{min,max}` | `5.0` | fixed 5 s cloning context |
