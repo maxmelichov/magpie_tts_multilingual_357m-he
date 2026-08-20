@@ -57,6 +57,11 @@ def wav_duration(path: Path):
         return None
 
 
+# Symbols the Hebrew IPA tokenizer knows. Rows containing anything else are
+# dropped: they are mojibake, stray orthography, or foreign-script leakage.
+ALLOWED_CHARS = set("abdefhijklmnoprstuvzɡʁʃʔχˈ" + " ,.?!")
+
+
 def load_rows(csv_path: Path, text_col: str, max_wer: float):
     rows = []
     with open(csv_path, newline="", encoding="utf-8") as f:
@@ -64,6 +69,8 @@ def load_rows(csv_path: Path, text_col: str, max_wer: float):
         for r in reader:
             text = (r.get(text_col) or "").strip()
             if not text:
+                continue
+            if not set(text) <= ALLOWED_CHARS:
                 continue
             if "passed_filter" in r and r["passed_filter"].strip().lower() != "true":
                 continue

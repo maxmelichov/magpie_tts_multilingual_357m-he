@@ -39,8 +39,9 @@ def main():
     if merged == 0:
         raise SystemExit("no lora_A keys found — is this a LoRA checkpoint?")
 
-    ckpt["state_dict"] = sd
-    torch.save(ckpt, args.out)
+    # Save a minimal plain-tensor checkpoint: NeMo's inference loader uses
+    # torch.load(weights_only=True), which rejects pickled OmegaConf objects.
+    torch.save({"state_dict": sd}, args.out)
     print(f"merged {merged} LoRA adapters -> {args.out}")
 
 

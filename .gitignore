@@ -1,7 +1,8 @@
-venv/
 NeMo/
+__pycache__/
 checkpoints/
+data/
+experiments*/
 experiments/
 outputs/
-data/
-__pycache__/
+venv/

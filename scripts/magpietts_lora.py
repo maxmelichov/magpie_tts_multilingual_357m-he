@@ -38,6 +38,10 @@ from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 
+# Hebrew IPA symbol set, exactly what appears in the training data.
+HEBREW_IPA_CHARS = "abdefhijklmnoprstuvzɡʁʃʔχˈ"
+HEBREW_IPA_PUNCT = [',', '.', '?', '!']
+
 DEFAULT_TARGETS = ["qkv_net", "o_net", "q_net", "kv_net"]
 # Modules kept fully trainable (substring match on parameter name). The text
 # embedding must train: Hebrew byte tokens are new to the model.
@@ -112,7 +116,18 @@ def build_tokenizer_roster(extracted: Path, hebrew_name: str = "hebrew_chartoken
 
     tokenizers = {name: resolve(t) for name, t in tokenizers.items()}
     assert hebrew_name not in tokenizers
-    tokenizers[hebrew_name] = {"_target_": "AutoTokenizer", "pretrained_model": "google/byt5-small"}
+    # One token per IPA symbol, matching how the base model tokenizes its other
+    # IPA languages (byt5 is used only for orthographic text). NeMo only
+    # instantiates targets inside its own namespace, so this is BaseCharsTokenizer
+    # parameterized with the Hebrew IPA symbol set rather than a custom subclass.
+    tokenizers[hebrew_name] = {
+        "_target_": "nemo.collections.common.tokenizers.text_to_speech.tts_tokenizers.BaseCharsTokenizer",
+        "chars": HEBREW_IPA_CHARS,
+        "punct": True,
+        "apostrophe": False,
+        "pad_with_space": False,
+        "non_default_punct_list": list(HEBREW_IPA_PUNCT),
+    }
     return OmegaConf.create(tokenizers)
 
 

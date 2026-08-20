@@ -66,6 +66,7 @@ def main():
                     "duration": round(ctx_dur, 3),
                     "context_audio_filepath": ctx.name,
                     "context_text": args.context_text or text,
+                    "context_audio_duration": round(ctx_dur, 3),
                 }, ensure_ascii=False) + "\n")
 
     evalset = {

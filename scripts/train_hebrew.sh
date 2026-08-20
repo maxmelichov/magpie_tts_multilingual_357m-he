@@ -36,6 +36,7 @@ cd "$REPO_ROOT/NeMo"
 export CUDA_VISIBLE_DEVICES="$GPU"
 export PYTHONUNBUFFERED=1
 export HYDRA_FULL_ERROR=1
+export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"  # for scripts.hebrew_ipa_tokenizer
 
 exec "$REPO_ROOT/venv/bin/python" "$REPO_ROOT/scripts/magpietts_lora.py" \
     --config-path="$REPO_ROOT/NeMo/examples/tts/conf/magpietts" \
@@ -46,8 +47,6 @@ exec "$REPO_ROOT/venv/bin/python" "$REPO_ROOT/scripts/magpietts_lora.py" \
     exp_manager.exp_dir="$REPO_ROOT/experiments" \
     ++exp_manager.checkpoint_callback_params.save_top_k=3 \
     \
-    +model.text_tokenizers.hebrew_chartokenizer._target_=AutoTokenizer \
-    +model.text_tokenizers.hebrew_chartokenizer.pretrained_model="google/byt5-small" \
     \
     "${DS_ARGS[@]}" \
     \
