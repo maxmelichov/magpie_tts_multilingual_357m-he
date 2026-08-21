@@ -42,6 +42,13 @@ def main():
     ap.add_argument("--out-dir", default="outputs/infer")
     ap.add_argument("--codec", default="nvidia/nemo-nano-codec-22khz-1.89kbps-21.5fps")
     ap.add_argument("--gpu", default=os.environ.get("GPU", "1"), help="CUDA device id (default 1; cuda:0 busy)")
+    # Quality knobs. The model is trained with a local transformer (multi-codebook
+    # refinement) and with CFG dropout, but NeMo's inference script leaves both off
+    # by default -- enabling them audibly improves naturalness.
+    ap.add_argument("--use-cfg", action="store_true", help="classifier-free guidance")
+    ap.add_argument("--use-local-transformer", action="store_true", help="multi-codebook refinement")
+    ap.add_argument("--extra", nargs=argparse.REMAINDER, default=[],
+                    help="remaining args passed through to magpietts_inference.py")
     args = ap.parse_args()
 
     out_dir = Path(args.out_dir).absolute()
@@ -87,6 +94,12 @@ def main():
         "--out_dir", str(out_dir),
         "--codecmodel_path", args.codec,
     ]
+    if args.use_cfg:
+        cmd.append("--use_cfg")
+    if args.use_local_transformer:
+        cmd.append("--use_local_transformer")
+    cmd += args.extra
+
     if args.checkpoint.endswith(".nemo"):
         cmd += ["--nemo_files", str(Path(args.checkpoint).absolute())]
     else:
