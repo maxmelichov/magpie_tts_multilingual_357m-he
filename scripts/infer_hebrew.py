@@ -45,8 +45,10 @@ def main():
     # Quality knobs. The model is trained with a local transformer (multi-codebook
     # refinement) and with CFG dropout, but NeMo's inference script leaves both off
     # by default -- enabling them audibly improves naturalness.
-    ap.add_argument("--use-cfg", action="store_true", help="classifier-free guidance")
-    ap.add_argument("--use-local-transformer", action="store_true", help="multi-codebook refinement")
+    ap.add_argument("--use-cfg", action=argparse.BooleanOptionalAction, default=True,
+                    help="classifier-free guidance (default on)")
+    ap.add_argument("--use-local-transformer", action=argparse.BooleanOptionalAction, default=True,
+                    help="multi-codebook refinement (default on)")
     ap.add_argument("--extra", nargs=argparse.REMAINDER, default=[],
                     help="remaining args passed through to magpietts_inference.py")
     args = ap.parse_args()
