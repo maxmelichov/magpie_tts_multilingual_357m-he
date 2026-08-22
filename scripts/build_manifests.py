@@ -85,6 +85,13 @@ def load_rows(csv_path: Path, text_col: str, max_wer: float):
 
 
 def build_dataset(name, audio_dir: Path, csv_path: Path, text_col: str, args, out_dir: Path):
+    # MagpieTTS picks ONE context source: magpietts.py does
+    #   context_embedded = torch.where(has_text_context, text_ctx, audio_ctx)
+    # and has_text_context is True whenever the manifest carries a "context_text"
+    # field. Putting the context clip's transcript there -- which the NeMo docs
+    # suggest -- therefore discards the context audio AND hands the model a
+    # speaker descriptor that changes every utterance, so the voice never
+    # stabilizes. A constant per-speaker label is what the field is good for.
     rows = load_rows(csv_path, text_col, args.max_wer)
     print(f"[{name}] {len(rows)} rows after CSV filters", flush=True)
 
@@ -114,8 +121,12 @@ def build_dataset(name, audio_dir: Path, csv_path: Path, text_col: str, args, ou
         while ctx is e and len(ctx_pool) > 1:
             ctx = rng.choice(ctx_pool)
         e["context_audio_filepath"] = ctx["audio_filepath"]
-        e["context_text"] = ctx["text"]
         e["context_audio_duration"] = ctx["duration"]
+        if args.context_text == "speaker":
+            e["context_text"] = f"hebrew_{name}"
+        elif args.context_text == "transcript":
+            e["context_text"] = ctx["text"]
+        # "none": omit the field so the audio context branch is used instead
 
     rng.shuffle(entries)
     n_val = min(args.val_size, max(1, len(entries) // 20))
@@ -142,6 +153,9 @@ def main():
     ap.add_argument("--val-size", type=int, default=100, help="val utterances per voice (capped at 5%% of data)")
     ap.add_argument("--include-slow44k", action=argparse.BooleanOptionalAction, default=True,
                     help="also build manifests for the 12 slow_44K Hebrew speakers")
+    ap.add_argument("--context-text", choices=["speaker", "transcript", "none"], default="speaker",
+                    help="what to put in context_text: a stable per-speaker label (default), "
+                         "the transcript of the context clip, or omit the field entirely")
     ap.add_argument("--workers", type=int, default=32)
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()

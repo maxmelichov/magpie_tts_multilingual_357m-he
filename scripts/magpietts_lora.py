@@ -82,8 +82,15 @@ def inject_lora(model: nn.Module, targets, r: int, alpha: int, dropout: float) -
 
 
 def freeze_non_lora(model: nn.Module, extra_trainable) -> None:
+    # Match on the parameter's own module path, not a bare substring: "text_embedding"
+    # as a substring also matches "context_text_embedding", which silently unfroze
+    # the speaker-conditioning table.
+    def matches(name):
+        parts = name.split(".")
+        return any(t in parts for t in extra_trainable)
+
     for name, p in model.named_parameters():
-        trainable = "lora_" in name or any(s in name for s in extra_trainable)
+        trainable = "lora_" in name or matches(name)
         p.requires_grad = trainable
     # The frozen codec must stay frozen regardless.
     if hasattr(model, "_codec_model"):
@@ -131,9 +138,101 @@ def build_tokenizer_roster(extracted: Path, hebrew_name: str = "hebrew_chartoken
     return OmegaConf.create(tokenizers)
 
 
-def load_pretrained_weights(model: MagpieTTSModel, extracted: Path):
-    """Load checkpoint weights, padding text_embedding for the appended Hebrew
-    tokenizer block (new rows keep the model's fresh initialization)."""
+# Donor tokenizers for initializing the new Hebrew rows, best match first.
+# Spanish first: a 5-vowel system like Hebrew. Portuguese supplies the uvular
+# /ʁ/, Hindi the uvular fricative /χ/. 26 of the 27 Hebrew IPA symbols already
+# exist in one of these, with embeddings the base model has already trained.
+IPA_DONORS = [
+    "spanish_phoneme",
+    "portuguese_Brazilian_phoneme",
+    "german_phoneme",
+    "hindi_phoneme",
+    "english_phoneme",
+]
+# /ʔ/ appears in no donor vocabulary. /h/ is the closest available: both glottal,
+# differing in manner, which beats a random vector.
+IPA_FALLBACK = {"ʔ": "h"}
+
+
+def _donor_token_rows(agg, name):
+    """Map token string -> global text_embedding row for one sub-tokenizer."""
+    tok = agg.tokenizers[name]
+    toks = list(tok.tokens) if hasattr(tok, "tokens") else list(tok.get_vocab().keys())
+    off = agg.tokenizer_offsets[name]
+    return {str(t): off + i for i, t in enumerate(toks)}
+
+
+def init_new_token_embeddings(model, hebrew_name="hebrew_chartokenizer"):
+    """Seed the new Hebrew rows from the same IPA symbol in a language the model
+    already speaks, instead of leaving them randomly initialized.
+
+    The base checkpoint carries six IPATokenizer vocabularies, so nearly every
+    Hebrew phone is a symbol it has already learned to pronounce; only the
+    tokenizer that owns the row is new. Copying those rows starts training from
+    a working pronunciation rather than from noise.
+    """
+    agg = model.tokenizer
+    emb = model.text_embedding.weight.data
+    heb_off = agg.tokenizer_offsets[hebrew_name]
+    heb_tokens = [str(t) for t in agg.tokenizers[hebrew_name].tokens]
+
+    donors = {d: _donor_token_rows(agg, d) for d in IPA_DONORS if d in agg.tokenizers}
+    copied, missing = [], []
+    for local_i, tok in enumerate(heb_tokens):
+        want = IPA_FALLBACK.get(tok, tok)
+        for dname, rows in donors.items():
+            if want in rows:
+                emb[heb_off + local_i] = emb[rows[want]].clone()
+                copied.append(f"{tok}<-{dname.split('_')[0]}"
+                              + (f":{want}" if want != tok else ""))
+                break
+        else:
+            missing.append(tok)
+
+    # Anything with no donor keeps its fresh init, but rescaled to the norm of the
+    # pretrained table -- fresh init is several times too large otherwise.
+    if missing:
+        target = emb[:heb_off].norm(dim=1).mean()
+        for local_i, tok in enumerate(heb_tokens):
+            if tok in missing:
+                row = emb[heb_off + local_i]
+                emb[heb_off + local_i] = row * (target / row.norm().clamp_min(1e-6))
+
+    logging.info(f"Hebrew embeddings seeded from existing IPA rows ({len(copied)}/{len(heb_tokens)}): "
+                 f"{' '.join(copied)}")
+    if missing:
+        logging.info(f"  no donor, rescaled fresh init: {missing}")
+
+
+def freeze_pretrained_embedding_rows(model, hebrew_name="hebrew_chartokenizer"):
+    """Let gradients reach only the new Hebrew rows of text_embedding.
+
+    text_embedding is shared across all 16 languages. Leaving the whole table
+    trainable lets Hebrew training drag the other 15 languages' phoneme
+    embeddings around, and BOS/EOS with them. A gradient mask keeps the new rows
+    learnable while every pretrained row stays exactly as released.
+    """
+    agg = model.tokenizer
+    start = agg.tokenizer_offsets[hebrew_name]
+    n_new = agg.num_tokens_per_tokenizer[hebrew_name]
+    w = model.text_embedding.weight
+    mask = torch.zeros(w.shape[0], 1)
+    mask[start: start + n_new] = 1.0          # BOS/EOS stay frozen: they are pretrained
+    w.register_hook(lambda grad, m=mask: grad * m.to(grad.device, grad.dtype))
+    logging.info(f"text_embedding: training rows [{start}, {start + n_new}) only; "
+                 f"{w.shape[0] - n_new} pretrained rows frozen (incl. BOS/EOS)")
+
+
+def load_pretrained_weights(model: MagpieTTSModel, extracted: Path, seed_from_ipa: bool = True):
+    """Load checkpoint weights into the Hebrew-extended text embedding table.
+
+    The table is laid out [base vocab | new Hebrew block | BOS | EOS], so BOS and
+    EOS MOVE when the Hebrew block is appended. Copying the checkpoint rows as one
+    contiguous prefix would drop the pretrained BOS/EOS onto the first two Hebrew
+    tokens and leave the real BOS/EOS randomly initialized -- the model would have
+    to relearn sequence start/end from scratch. Copy the vocabulary and the two
+    special rows separately.
+    """
     sd = torch.load(extracted / "model_weights.ckpt", map_location="cpu", weights_only=False)
     if not isinstance(sd, dict) or "text_embedding.weight" not in sd:
         sd = sd.get("state_dict", sd)
@@ -141,14 +240,20 @@ def load_pretrained_weights(model: MagpieTTSModel, extracted: Path):
     model_emb = model.text_embedding.weight.data
     if model_emb.shape[0] < ckpt_emb.shape[0]:
         raise RuntimeError(f"model text_embedding {model_emb.shape} smaller than checkpoint {ckpt_emb.shape}")
+
+    base_vocab = ckpt_emb.shape[0] - 2          # checkpoint rows minus its BOS/EOS
+    n_new = model_emb.shape[0] - ckpt_emb.shape[0]
     padded = model_emb.clone()
-    padded[: ckpt_emb.shape[0]] = ckpt_emb
+    padded[:base_vocab] = ckpt_emb[:base_vocab]  # shared vocabulary
+    padded[-2] = ckpt_emb[-2]                    # BOS, at its new position
+    padded[-1] = ckpt_emb[-1]                    # EOS
     sd["text_embedding.weight"] = padded
-    logging.info(
-        f"text_embedding: {ckpt_emb.shape[0]} pretrained rows + "
-        f"{model_emb.shape[0] - ckpt_emb.shape[0]} new Hebrew rows"
-    )
+    logging.info(f"text_embedding: {base_vocab} pretrained rows + {n_new} new Hebrew rows "
+                 f"+ pretrained BOS/EOS remapped to rows {model_emb.shape[0] - 2}/{model_emb.shape[0] - 1}")
     model.load_state_dict(sd, strict=True)
+
+    if seed_from_ipa:
+        init_new_token_embeddings(model)
 
 
 @hydra_runner(config_path="conf/magpietts", config_name="magpietts")
@@ -187,7 +292,8 @@ def main(cfg):
     exp_manager(trainer, cfg.get("exp_manager", None))
 
     model = MagpieTTSModel(cfg=cfg.model, trainer=trainer)
-    load_pretrained_weights(model, extracted)
+    load_pretrained_weights(model, extracted,
+                            seed_from_ipa=bool(cfg.get("seed_hebrew_from_ipa", True)))
 
     lora_cfg = cfg.get("lora", OmegaConf.create({}))
     r = int(lora_cfg.get("r", 16))
@@ -198,6 +304,8 @@ def main(cfg):
 
     n = inject_lora(model, targets, r, alpha, dropout)
     freeze_non_lora(model, extra_trainable)
+    if bool(cfg.get("freeze_pretrained_embeddings", True)):
+        freeze_pretrained_embedding_rows(model)
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())

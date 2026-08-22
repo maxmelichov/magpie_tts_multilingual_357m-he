@@ -40,6 +40,8 @@ def main():
     ap.add_argument("--context-audio", help="reference wav for voice cloning (used with --text)")
     ap.add_argument("--context-text", default="", help="IPA transcript of the context wav (optional)")
     ap.add_argument("--out-dir", default="outputs/infer")
+    ap.add_argument("--tokenizer", default=TOKENIZER,
+                    help="tokenizer name from the checkpoint (default hebrew_chartokenizer)")
     ap.add_argument("--codec", default="nvidia/nemo-nano-codec-22khz-1.89kbps-21.5fps")
     ap.add_argument("--gpu", default=os.environ.get("GPU", "1"), help="CUDA device id (default 1; cuda:0 busy)")
     # Quality knobs. The model is trained with a local transformer (multi-codebook
@@ -83,7 +85,7 @@ def main():
             "manifest_path": str(manifest_path),
             "audio_dir": str(audio_dir),
             "feature_dir": str(audio_dir),
-            "tokenizer_names": [TOKENIZER],
+            "tokenizer_names": [args.tokenizer],
         }
     }
     evalset_path = out_dir / "evalset_config.json"
