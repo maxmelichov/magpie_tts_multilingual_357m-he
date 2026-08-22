@@ -93,6 +93,81 @@ overrides from `data/manifests/datasets.json`.
 | `weighted_sampling_steps_per_epoch` | `2000` | balanced sampling across 15 uneven datasets |
 | `batch_size` | `8` per GPU | fp32 on a 32 GB RTX 5090 |
 
+## Evaluation — ILSpeech held-out test set
+
+[Phonikud/ILSpeech](https://huggingface.co/datasets/Phonikud/ILSpeech) v2 is real
+recorded Hebrew from two speakers with gold IPA, and neither speaker appears in
+our training data — so its 150-utterance test split is a genuine zero-shot
+benchmark rather than a rerun of the training distribution.
+
+```bash
+# fetch + extract ilspeech-v2.7z into data/ilspeech/, then:
+venv/bin/python scripts/build_ilspeech_eval.py
+venv/bin/python scripts/infer_hebrew.py \
+  --checkpoint experiments/magpie_hebrew_final.ckpt \
+  --hparams   experiments/magpie_hebrew_final.hparams.yaml \
+  --manifest  data/ilspeech/eval/eval_manifest.json \
+  --audio-dir data/ilspeech/ilspeech-v2/wav \
+  --out-dir   outputs/ilspeech_eval --extra --batch_size 4
+venv/bin/python scripts/score_ilspeech.py \
+  --pred-dir outputs/ilspeech_eval/<run>/audio/repeat_0
+```
+
+Every metric is reported next to the same metric measured on the **real
+recordings**, because the ASR models have their own error rate and without that
+column you cannot tell a synthesis error from a transcription error.
+
+| metric | synthesized | real recordings |
+|---|---|---|
+| Hebrew WER (`ivrit-ai/whisper-large-v3-turbo`) | **9.0%** | 8.6% |
+| Hebrew CER | **4.6%** | 4.5% |
+| IPA PER (`notmax123/whisper-he-ipa`) | **1.1%** | 2.2% |
+| duration vs ground truth | 1.03× | 1.00 |
+
+**Intelligibility is at the measurement ceiling.** WER and CER are within 0.4
+points of real human recordings of the same sentences, and phoneme error is
+*lower* than on the real audio — the model articulates the IPA it is given more
+canonically than the speakers themselves do. Pace also tracks the recordings
+(1.03×). Reading Hebrew IPA works.
+
+Two notes on making these numbers mean anything. `notmax123/whisper-he-ipa`
+emits an ASCII transliteration (`q`=ʔ, `S`=ʃ, `x`=χ, `g`=ɡ, `r`=ʁ), so scoring
+it directly against gold IPA reports ~37% PER on *real recordings* — pure symbol
+mismatch. `scripts/score_ilspeech.py` maps the alphabet first. Only 2 of 150 test
+utterances contain IPA outside the model's 27-symbol vocabulary (`w` in
+loanwords, mapped to `v`), and no test wav reaches the 10 s context length frame
+stacking requires, so the voice reference is built by concatenating *train*-split
+utterances of the same speaker.
+
+### Voice cloning does not work
+
+| TitaNet cosine similarity | value |
+|---|---|
+| real speaker vs itself | 0.66 – 0.81 |
+| real speaker vs a different speaker | 0.00 – 0.23 |
+| generated vs its target speaker (unseen) | **0.21** |
+| generated vs its target speaker (a *training* voice) | **0.37** |
+| generated vs generated, *different reference clips* | **0.35** |
+| generated vs generated, same reference | 0.34 |
+
+The last two rows are the finding: swapping the reference clip changes the output
+no more than resynthesizing the same reference does. The model emits one diffuse
+average voice regardless of what it is conditioned on, and it does so even for a
+voice it trained on — so this is not a generalization gap, it is speaker
+conditioning that stopped functioning. Disabling CFG makes it slightly worse
+(0.31), so guidance is not the cause.
+
+Reproduce with `scripts/diagnose_speaker_conditioning.py`, which always prints
+the same-speaker and different-speaker anchors, since a bare similarity number
+carries no scale.
+
+The likely cause is the fine-tuning setup rather than the recipe: 15 speakers,
+all synthetic and each internally very uniform, with LoRA on every attention
+projection including the context cross-attention. Ignoring the reference and
+predicting the corpus-average voice is a low-loss shortcut under that data.
+Worth trying before anything else: freeze the context encoder and its
+cross-attention (drop them from `+lora.targets`), and add speaker diversity.
+
 ## Results and limitations
 
 Validation loss converged well before the configured 200k steps:
