@@ -17,11 +17,15 @@ recordings**, because the ASR has its own error rate.
 |---|---|---|
 | Hebrew WER | 10.4% | 10.2% |
 | Hebrew CER | 4.7% | 4.8% |
-| IPA WER | 5.0% | 3.3% |
-| IPA PER | 0.9% | 0.7% |
+| IPA WER | 5.4% | 3.8% |
+| IPA PER | 1.0% | 0.8% |
 | pace vs ground truth | 0.97× | 1.00 |
 
 Reading Hebrew works: WER lands within 0.2 points of human recordings and CER is slightly better.
+Stress placement is correct on 99.7% of phonemically-correct words, against 99.5% for the human
+recordings — the IPA metrics above include stress, since scoring without it discards a real quality
+signal and cannot separate models (stress-blind delta -0.21%, CI [-0.57, +0.18]; with stress
+-0.65%, CI [-1.02, -0.27]).
 ASR models used: `ivrit-ai/whisper-large-v3-turbo` (Hebrew), `notmax123/whisper-he-ipa` (IPA).
 
 ## Limitations

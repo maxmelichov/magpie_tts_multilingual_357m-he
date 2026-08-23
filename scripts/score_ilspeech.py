@@ -71,9 +71,15 @@ def norm_asr_ipa(text):
 
 
 def norm_ipa(text):
-    """Compare IPA on symbols only: stress marks and punctuation are not
-    reliably recovered by ASR and would dominate the error rate."""
-    return " ".join(re.sub(r"[ˈˌ,.?!]", "", text).split())
+    """Strip punctuation but KEEP stress.
+
+    Stress was excluded originally on the assumption that ASR could not recover
+    it. Measured on 15,271 words of real recordings it is recovered 99.5% of the
+    time, so dropping it just discarded a real quality signal: on the ILSpeech
+    full set the stress-blind IPA WER cannot separate two models (delta -0.21%,
+    CI [-0.57, +0.18]) while the stress-inclusive one can (-0.65%, CI
+    [-1.02, -0.27]). Stress placement is meaningful in Hebrew; score it."""
+    return " ".join(re.sub(r"[,.?!]", "", text).split())
 
 
 def rate(ref_units, hyp_units):
