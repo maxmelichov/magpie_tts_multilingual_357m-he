@@ -6,3 +6,4 @@ experiments*/
 experiments/
 outputs/
 venv/
+tools/renikud/*.onnx

@@ -34,6 +34,19 @@ against the same baked embedding, so the output is an inconsistent average rathe
 voice (speaker self-similarity 0.36, where same-speaker is ~0.80). Fixing this means extending the
 baked speaker embedding table and passing `speaker_indices` — not more training.
 
+**Loanword phonemes are missing.** Phonikud emits `w` and the geresh set
+`ג׳ ז׳ צ׳` -> `dʒ ʒ tʃ`, and of those only **`tʃ` works** — the tokenizer is
+character-level, so `tʃ` is just `t`+`ʃ`, both trained. `w`, `ʒ` and `dʒ` come out
+wrong (`wiskˈi` -> `vˈiskij`, `hadʒˈip` -> `hadˈip`). `scripts/extend_vocab.py`
+adds `w`/`ʒ` to a trained checkpoint and seeds them from the base model's Spanish
+vocabulary, but seeding alone does not transfer pronunciation — unlike the other
+26 symbols, these have no gradient updates behind them.
+
+Training cannot fix this from the current corpus: it contains 7 `w` and 1 `ʒ` in
+1.3M utterances, and re-phonemizing the Hebrew source with RenikudPlus yields ~0
+`ʒ`/`dʒ` and ~262 `w` across 788k rows — the text is formal Hebrew with no geresh
+marks at all. It needs targeted loanword recordings, not more of the same data.
+
 **Training data is synthetic** (TTS output verified by ASR, not studio recordings), which caps
 naturalness near the teacher systems'.
 
@@ -55,7 +68,8 @@ venv/bin/python scripts/infer_hebrew.py \
   --text "ʃalˈom, mˈa ʃlomχˈa?" --context-audio <any 10s+ wav> --out-dir outputs/
 ```
 
-Phonemize with [Phonikud](https://github.com/thewh1teagle/phonikud). Supported symbols (27):
+Phonemize with [Phonikud](https://github.com/thewh1teagle/phonikud) or
+[RenikudPlus](https://huggingface.co/notmax123/RenikudPlus). Supported symbols (27):
 
 ```
 a b d e f h i j k l m n o p r s t u v z ɡ ʁ ʃ ʔ χ ˈ   plus  , . ? !
@@ -70,6 +84,11 @@ venv/bin/python scripts/build_ilspeech_eval.py --split all --out-name eval_full.
 venv/bin/python scripts/infer_hebrew.py --manifest data/ilspeech/eval/eval_full.json ...
 venv/bin/python scripts/score_ilspeech.py --pred-dir outputs/<run>/audio/repeat_0
 ```
+
+`scripts/extend_vocab.py` adds IPA symbols to a trained checkpoint without
+retraining, and `scripts/rephonemize_renikud.py` re-phonemizes the corpus with
+RenikudPlus (strip nikud first — it predicts the diacritics itself and mangles
+pre-pointed input).
 
 `scripts/diagnose_speaker_conditioning.py` checks whether the reference clip changes the output at
 all, printing same-speaker and different-speaker anchors so the similarity number has a scale.
