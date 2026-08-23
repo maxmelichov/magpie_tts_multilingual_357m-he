@@ -198,6 +198,10 @@ def main():
         ("heb_cer_gt",    "text", heb_gt,   "char"),
         ("ipa_per_pred",  "ipa",  ipa_pred, "char"),
         ("ipa_per_gt",    "ipa",  ipa_gt,   "char"),
+        # Word-level over IPA: one wrong phoneme fails the whole word, so this is
+        # far stricter than PER and shows errors that char-level distance averages away.
+        ("ipa_wer_pred",  "ipa",  ipa_pred, "word"),
+        ("ipa_wer_gt",    "ipa",  ipa_gt,   "word"),
         # baseline: how much of the PER is the ASR's own transliteration noise
 
     ]
@@ -260,6 +264,7 @@ def main():
     print(f"{'Hebrew WER':<22}{c['heb_wer_pred']:>13.1%}{c['heb_wer_gt']:>14.1%}")
     print(f"{'Hebrew CER':<22}{c['heb_cer_pred']:>13.1%}{c['heb_cer_gt']:>14.1%}")
     print(f"{'IPA PER':<22}{c['ipa_per_pred']:>13.1%}{c['ipa_per_gt']:>14.1%}")
+    print(f"{'IPA WER (word-level)':<22}{c['ipa_wer_pred']:>13.1%}{c['ipa_wer_gt']:>14.1%}")
     m = summary["corpus"]
     if "spk_sim_gt" in m:
         print(f"\n{'speaker sim vs GT':<22}{m['spk_sim_gt']:>13.3f}   (higher is better)")
@@ -268,7 +273,7 @@ def main():
     print(f"{'duration ratio':<22}{m['dur_ratio']:>13.3f}   (1.0 = matches GT pace)")
     print("\nby speaker:")
     for s, v in summary["by_speaker"].items():
-        line = f"  {s:<12} n={v['n']:<4} WER {v['heb_wer_pred']:.1%} (gt {v['heb_wer_gt']:.1%})  PER {v['ipa_per_pred']:.1%} (gt {v['ipa_per_gt']:.1%})"
+        line = f"  {s:<12} n={v['n']:<4} WER {v['heb_wer_pred']:.1%} (gt {v['heb_wer_gt']:.1%})  PER {v['ipa_per_pred']:.1%} (gt {v['ipa_per_gt']:.1%})  ipaWER {v['ipa_wer_pred']:.1%} (gt {v['ipa_wer_gt']:.1%})"
         if "spk_sim_gt" in v:
             line += f"  sim {v['spk_sim_gt']:.3f}"
         print(line)

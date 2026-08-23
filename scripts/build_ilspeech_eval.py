@@ -99,12 +99,20 @@ def main():
     ap.add_argument("--ilspeech-dir", type=Path,
                     default=REPO_ROOT / "data/ilspeech/ilspeech-v2")
     ap.add_argument("--out-dir", type=Path, default=REPO_ROOT / "data/ilspeech/eval")
-    ap.add_argument("--limit", type=int, help="only the first N test utterances (smoke test)")
+    ap.add_argument("--limit", type=int, help="only the first N utterances (smoke test)")
+    ap.add_argument("--split", choices=["test", "all"], default="test",
+                    help="'test' = the 150-utterance held-out split; 'all' = train+test (~1531), "
+                         "for when 150 utterances cannot resolve the difference being measured")
+    ap.add_argument("--out-name", default="eval_manifest.json")
     args = ap.parse_args()
 
     wav_dir = args.ilspeech_dir / "wav"
     test = read_metadata(args.ilspeech_dir / "metadata_test.csv")
     train = read_metadata(args.ilspeech_dir / "metadata_train.csv")
+    if args.split == "all":
+        # ILSpeech is not in our training data at all, so its train split is just as
+        # unseen as its test split and can serve as extra evaluation material.
+        test = test + train
     if args.limit:
         test = test[: args.limit]
 
@@ -117,7 +125,14 @@ def main():
         print(f"[{spk}] context {ctx['duration']:.1f}s from {ctx['n_utts']} train utts "
               f"({', '.join(ctx['source_ids'])})")
 
-    manifest_path = args.out_dir / "eval_manifest.json"
+    # Utterances spent as voice references are excluded from the scored set.
+    ctx_ids = {i for c in contexts.values() for i in c["source_ids"]}
+    before = len(test)
+    test = [r for r in test if r["id"] not in ctx_ids]
+    if before != len(test):
+        print(f"excluded {before - len(test)} utterances used as context clips")
+
+    manifest_path = args.out_dir / args.out_name
     n_subs = n_rows_subbed = 0
     with open(manifest_path, "w", encoding="utf-8") as f:
         for r in test:

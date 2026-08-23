@@ -62,7 +62,7 @@ def wav_duration(path: Path):
 ALLOWED_CHARS = set("abdefhijklmnoprstuvzɡʁʃʔχˈ" + " ,.?!")
 
 
-def load_rows(csv_path: Path, text_col: str, max_wer: float):
+def load_rows(csv_path: Path, text_col: str, max_wer: float, require_wer_score: bool = False):
     rows = []
     with open(csv_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -80,6 +80,11 @@ def load_rows(csv_path: Path, text_col: str, max_wer: float):
                         continue
                 except ValueError:
                     continue
+            elif require_wer_score:
+                # No ASR verification for this row. A strict --max-wer says nothing
+                # about it, so an unscored row would otherwise pass through
+                # completely unfiltered -- the opposite of what the threshold is for.
+                continue
             rows.append((r["filename"].strip(), text))
     return rows
 
@@ -92,7 +97,7 @@ def build_dataset(name, audio_dir: Path, csv_path: Path, text_col: str, args, ou
     # suggest -- therefore discards the context audio AND hands the model a
     # speaker descriptor that changes every utterance, so the voice never
     # stabilizes. A constant per-speaker label is what the field is good for.
-    rows = load_rows(csv_path, text_col, args.max_wer)
+    rows = load_rows(csv_path, text_col, args.max_wer, args.require_wer_score)
     print(f"[{name}] {len(rows)} rows after CSV filters", flush=True)
 
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
@@ -153,6 +158,8 @@ def main():
     ap.add_argument("--val-size", type=int, default=100, help="val utterances per voice (capped at 5%% of data)")
     ap.add_argument("--include-slow44k", action=argparse.BooleanOptionalAction, default=True,
                     help="also build manifests for the 12 slow_44K Hebrew speakers")
+    ap.add_argument("--require-wer-score", action=argparse.BooleanOptionalAction, default=False,
+                    help="drop rows that carry no wer_score at all (they cannot meet --max-wer)")
     ap.add_argument("--context-text", choices=["speaker", "transcript", "none"], default="speaker",
                     help="what to put in context_text: a stable per-speaker label (default), "
                          "the transcript of the context clip, or omit the field entirely")
