@@ -1,5 +1,7 @@
 # MagpieTTS Multilingual 357M — Hebrew Fine-tuning
 
+<img src="assets/banner.jpg" alt="MagpieTTS Hebrew" width="100%">
+
 Fine-tunes [nvidia/magpie_tts_multilingual_357m](https://huggingface.co/nvidia/magpie_tts_multilingual_357m)
 on Hebrew using **IPA phoneme input**, following NeMo's
 ["adding a new language" recipe](https://docs.nvidia.com/nemo/speech/nightly/tts/magpietts-finetuning.html).
