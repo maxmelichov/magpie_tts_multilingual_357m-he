@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Add IPA symbols to a trained Hebrew checkpoint without retraining.
 
-Phonikud emits phonemes our 27-symbol Hebrew vocabulary does not cover -- `w`
-(SPECIAL_PHONEMES) and the geresh set `ג׳ ז׳ צ׳` -> `dʒ ʒ tʃ`. Of those only `w`
+RenikudPlus emits phonemes our 27-symbol Hebrew vocabulary does not cover -- `w`
+and the geresh set `ג׳ ז׳ צ׳` -> `dʒ ʒ tʃ`. Of those only `w`
 and `ʒ` are new *characters*: the tokenizer is character-level, so the affricates
 `tʃ`/`dʒ` are already expressible as two tokens, exactly like `ts` (צ) is today.
 

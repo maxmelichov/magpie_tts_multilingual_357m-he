@@ -34,7 +34,7 @@ against the same baked embedding, so the output is an inconsistent average rathe
 voice (speaker self-similarity 0.36, where same-speaker is ~0.80). Fixing this means extending the
 baked speaker embedding table and passing `speaker_indices` — not more training.
 
-**Loanword phonemes are missing.** Phonikud emits `w` and the geresh set
+**Loanword phonemes are missing.** RenikudPlus emits `w` and the geresh set
 `ג׳ ז׳ צ׳` -> `dʒ ʒ tʃ`, and of those only **`tʃ` works** — the tokenizer is
 character-level, so `tʃ` is just `t`+`ʃ`, both trained. `w`, `ʒ` and `dʒ` come out
 wrong (`wiskˈi` -> `vˈiskij`, `hadʒˈip` -> `hadˈip`). `scripts/extend_vocab.py`
@@ -68,8 +68,7 @@ venv/bin/python scripts/infer_hebrew.py \
   --text "ʃalˈom, mˈa ʃlomχˈa?" --context-audio <any 10s+ wav> --out-dir outputs/
 ```
 
-Phonemize with [Phonikud](https://github.com/thewh1teagle/phonikud) or
-[RenikudPlus](https://huggingface.co/notmax123/RenikudPlus). Supported symbols (27):
+Phonemize with [RenikudPlus](https://huggingface.co/notmax123/RenikudPlus) (`tools/renikud/`). Supported symbols (27):
 
 ```
 a b d e f h i j k l m n o p r s t u v z ɡ ʁ ʃ ʔ χ ˈ   plus  , . ? !
