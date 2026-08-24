@@ -40,6 +40,9 @@ def main():
     ap.add_argument("--context-audio", help="reference wav for voice cloning (used with --text)")
     ap.add_argument("--context-text", default="", help="IPA transcript of the context wav (optional)")
     ap.add_argument("--out-dir", default="outputs/infer")
+    ap.add_argument("--speaker-index", type=int,
+                    help="baked speaker slot: 0-4 are the original voices, 5+ the Hebrew ones "
+                         "(see data/manifests/speaker_index.json). This is the ONLY voice control.")
     ap.add_argument("--tokenizer", default=TOKENIZER,
                     help="tokenizer name from the checkpoint (default hebrew_chartokenizer)")
     ap.add_argument("--codec", default="nvidia/nemo-nano-codec-22khz-1.89kbps-21.5fps")
@@ -61,6 +64,13 @@ def main():
     if args.manifest:
         manifest_path = Path(args.manifest).absolute()
         audio_dir = Path(args.audio_dir or Path(args.manifest).parent).absolute()
+        if args.speaker_index is not None:
+            rows = [json.loads(l) for l in manifest_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+            manifest_path = out_dir / "input_manifest.json"
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                for r in rows:
+                    r["speaker_index"] = args.speaker_index
+                    f.write(json.dumps(r, ensure_ascii=False) + "\n")
     else:
         if not args.text or not args.context_audio:
             sys.exit("need --text and --context-audio (or --manifest)")
@@ -78,6 +88,7 @@ def main():
                     "context_audio_filepath": ctx.name,
                     "context_text": args.context_text or text,
                     "context_audio_duration": round(ctx_dur, 3),
+                    **({"speaker_index": args.speaker_index} if args.speaker_index is not None else {}),
                 }, ensure_ascii=False) + "\n")
 
     evalset = {
@@ -109,8 +120,20 @@ def main():
     else:
         if not args.hparams:
             sys.exit("--hparams is required when --checkpoint is a .ckpt")
+        hparams_path = Path(args.hparams).absolute()
+        # A release bundle (scripts/prepare_release.py) writes asset paths as
+        # "assets/<file>", relative to the hparams file itself -- portable, but
+        # NeMo resolves relative paths against its own CWD (NeMo/), not the
+        # YAML's location. Rewrite them to absolute before handing off.
+        assets_dir = hparams_path.parent / "assets"
+        if assets_dir.is_dir():
+            text = hparams_path.read_text(encoding="utf-8")
+            if "assets/" in text:
+                text = text.replace("assets/", f"{assets_dir}/")
+                hparams_path = out_dir / "resolved_hparams.yaml"
+                hparams_path.write_text(text, encoding="utf-8")
         cmd += ["--checkpoint_files", str(Path(args.checkpoint).absolute()),
-                "--hparams_files", str(Path(args.hparams).absolute())]
+                "--hparams_files", str(hparams_path)]
 
     env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(args.gpu))
     print("+", " ".join(cmd), flush=True)

@@ -45,7 +45,7 @@ HEBREW_IPA_PUNCT = [',', '.', '?', '!']
 DEFAULT_TARGETS = ["qkv_net", "o_net", "q_net", "kv_net"]
 # Modules kept fully trainable (substring match on parameter name). The text
 # embedding must train: Hebrew byte tokens are new to the model.
-DEFAULT_EXTRA_TRAINABLE = ["text_embedding"]
+DEFAULT_EXTRA_TRAINABLE = ["text_embedding", "baked_context_embedding"]
 
 
 class LoRALinear(nn.Linear):
@@ -204,6 +204,44 @@ def init_new_token_embeddings(model, hebrew_name="hebrew_chartokenizer"):
         logging.info(f"  no donor, rescaled fresh init: {missing}")
 
 
+def extend_baked_speakers(model, n_new: int, seed_noise: float = 0.15):
+    """Give each Hebrew speaker its own baked context embedding.
+
+    The released checkpoint has no context_encoder -- NeMo strips it when baked
+    embeddings are present -- so `context_audio` and `context_text` are both
+    ignored and voice is chosen solely by indexing this table. It ships 5 rows
+    (Aria, Jason, John, Leo, Sofia). Training every Hebrew speaker against the
+    single default row is what left the output voice an unconditioned average.
+
+    New rows are appended after the 5 originals (so existing indices keep their
+    voices) and seeded from a *different* original each, plus noise: identical
+    seeds give identical gradients and the voices would never separate.
+    """
+    emb = model.baked_context_embedding
+    n_old, dim = emb.weight.shape
+    new = nn.Embedding(n_old + n_new, dim, device=emb.weight.device, dtype=emb.weight.dtype)
+    with torch.no_grad():
+        new.weight[:n_old] = emb.weight
+        for i in range(n_new):
+            src = i % n_old                      # rotate donors to break symmetry
+            new.weight[n_old + i] = emb.weight[src]
+            new.weight[n_old + i] += torch.randn_like(emb.weight[src]) * seed_noise * emb.weight[src].std()
+    model.baked_context_embedding = new
+
+    lens = model.baked_context_embedding_len
+    model.baked_context_embedding_len = torch.cat(
+        [lens, torch.stack([lens[i % n_old] for i in range(n_new)])]
+    ).to(lens.device)
+    # Freeze the 5 released voices: measured without this, Hebrew training drifts
+    # Aria, Jason, John, Leo and Sofia away from what NVIDIA shipped.
+    mask = torch.zeros(n_old + n_new, 1)
+    mask[n_old:] = 1.0
+    new.weight.register_hook(lambda g, m=mask: g * m.to(g.device, g.dtype))
+    logging.info(f"baked speakers: {n_old} -> {n_old + n_new} "
+                 f"(hebrew voices occupy indices {n_old}..{n_old + n_new - 1}; "
+                 f"original {n_old} frozen)")
+
+
 def freeze_pretrained_embedding_rows(model, hebrew_name="hebrew_chartokenizer"):
     """Let gradients reach only the new Hebrew rows of text_embedding.
 
@@ -304,6 +342,10 @@ def main(cfg):
 
     n = inject_lora(model, targets, r, alpha, dropout)
     freeze_non_lora(model, extra_trainable)
+    n_new_spk = int(cfg.get("num_new_speakers", 0))
+    if n_new_spk:
+        extend_baked_speakers(model, n_new_spk)
+        freeze_non_lora(model, extra_trainable)   # re-apply: the table was replaced
     if bool(cfg.get("freeze_pretrained_embeddings", True)):
         freeze_pretrained_embedding_rows(model)
 

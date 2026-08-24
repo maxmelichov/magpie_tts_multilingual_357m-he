@@ -13,30 +13,35 @@ Model: [notmax123/magpie_tts_multilingual_357m-he](https://huggingface.co/notmax
 recorded Hebrew, not in our training data. Every metric sits next to the same metric on the **real
 recordings**, because the ASR has its own error rate.
 
-| metric | synthesized | real recordings |
+| voice (speaker_index) | Hebrew WER | IPA WER |
 |---|---|---|
-| Hebrew WER | 10.4% | 10.2% |
-| Hebrew CER | 4.7% | 4.8% |
-| IPA WER | 5.4% | 3.8% |
-| IPA PER | 1.0% | 0.8% |
-| pace vs ground truth | 0.97× | 1.00 |
+| male2 (13) | 10.9% | 5.6% |
+| female5 (10) | 11.0% | 6.2% |
+| voice2 (18) | 11.5% | 7.6% |
+| real recordings | 10.2% | 3.8% |
 
-Reading Hebrew works: WER lands within 0.2 points of human recordings and CER is slightly better.
-Stress placement is correct on 99.7% of phonemically-correct words, against 99.5% for the human
-recordings — the IPA metrics above include stress, since scoring without it discards a real quality
-signal and cannot separate models (stress-blind delta -0.21%, CI [-0.57, +0.18]; with stress
--0.65%, CI [-1.02, -0.27]).
+Reading Hebrew works, within 0.7-1.3 points of human WER depending on voice. Stress placement is
+correct on 99.7% of phonemically-correct words (human recordings: 99.5%) — the IPA metrics above
+include stress, since scoring without it discards a real quality signal.
 ASR models used: `ivrit-ai/whisper-large-v3-turbo` (Hebrew), `notmax123/whisper-he-ipa` (IPA).
+
+**Voice selection costs ~1 point of WER against the single-voice version of this model.** An earlier
+checkpoint with one unconditioned voice per speaker scored 10.4%/5.4% (Hebrew/IPA WER) — measurably
+better, confirmed on the full 1,525-utterance set with a paired bootstrap (Hebrew WER delta -0.36%,
+95% CI [-0.65, -0.06]). Splitting one shared voice into 15 selectable ones gives each less training
+signal. This checkpoint trades that for usable voice control; if you need the best possible WER and
+don't need voice selection, train with `+num_new_speakers=0`.
 
 ## Limitations
 
-**No voice cloning, and no voice selection.** The released base checkpoint has the `context_encoder`
-weights removed entirely (0 tensors in the file), replaced by 5 baked speaker embeddings — NVIDIA
-dropped zero-shot cloning for security reasons. So `context_audio` and `context_text` are both
-ignored: **the reference clip has no effect on the output voice.** All 14 Hebrew speakers trained
-against the same baked embedding, so the output is an inconsistent average rather than one stable
-voice (speaker self-similarity 0.36, where same-speaker is ~0.80). Fixing this means extending the
-baked speaker embedding table and passing `speaker_indices` — not more training.
+**No voice cloning — voice selection instead.** The released base checkpoint has the
+`context_encoder` weights removed entirely (0 tensors in the file), replaced by 5 baked speaker
+embeddings — NVIDIA dropped zero-shot cloning for security reasons. `context_audio` and
+`context_text` are both ignored; **the reference clip has no effect on the output voice.** We
+extended the baked table with 15 trained Hebrew voices, selected by `--speaker-index` (see Usage).
+Self-similarity per voice is 0.74-0.80 (real-speaker scale ~0.80), cross-voice 0.11-0.27 (different
+speakers ~0.00) — each index is a stable, distinct voice. The original 5 released voices
+(indices 0-4) are restored bit-exact after training and are unaffected.
 
 **Loanword phonemes are missing.** RenikudPlus emits `w` and the geresh set
 `ג׳ ז׳ צ׳` -> `dʒ ʒ tʃ`, and of those only **`tʃ` works** — the tokenizer is
@@ -62,23 +67,44 @@ transcripts) — training was masked to the 33 new Hebrew embedding rows only.
 ```bash
 bash scripts/setup.sh                          # venv + NeMo + base checkpoint
 venv/bin/python scripts/build_manifests.py     # manifests from the Hebrew CSVs
-bash scripts/train_hebrew.sh                   # train (both GPUs)
+bash scripts/train_hebrew.sh +num_new_speakers=15   # train (both GPUs); 0 for single-voice instead
 
 venv/bin/python scripts/merge_lora.py \
   --ckpt experiments/Magpie-TTS/checkpoints/<best>.ckpt --out merged.ckpt
 
 venv/bin/python scripts/infer_hebrew.py \
   --checkpoint merged.ckpt --hparams experiments/Magpie-TTS/version_0/hparams.yaml \
+  --speaker-index 13 \
   --text "ʃalˈom, mˈa ʃlomχˈa?" --context-audio <any 10s+ wav> --out-dir outputs/
 ```
+
+`--speaker-index` is the only voice control (see Limitations); `--context-audio` is required by
+the plumbing but does not change the voice. Indices 0-4 are the released voices (Aria, Jason, John,
+Leo, Sofia), unaffected by this fine-tune. 5-19 are the Hebrew voices added here:
+
+| index | name |
+|---|---|
+| 5 | female1 |
+| 6 | female1_hebrew |
+| 7 | female2 |
+| 8 | female3 |
+| 9 | female4 |
+| 10 | female5 |
+| 11 | male1 |
+| 12 | male1_hebrew |
+| 13 | male2 |
+| 14 | male3 |
+| 15 | male4 |
+| 16 | male5 |
+| 17 | voice1 |
+| 18 | voice2 |
+| 19 | voice3 |
 
 Phonemize with [RenikudPlus](https://huggingface.co/notmax123/RenikudPlus) (`tools/renikud/`). Supported symbols (27):
 
 ```
 a b d e f h i j k l m n o p r s t u v z ɡ ʁ ʃ ʔ χ ˈ   plus  , . ? !
 ```
-
-`--context-audio` is required by the plumbing but does not change the voice (see Limitations).
 
 ## Evaluation
 
@@ -100,6 +126,11 @@ all, printing same-speaker and different-speaker anchors so the similarity numbe
 
 LoRA (r=16, α=32) on attention projections — 78 adapters, 4.7M of 375M params trainable, merged into
 the base weights for release. 80k steps on 2× RTX 5090.
+
+The baked speaker table (see Limitations) is extended from 5 to 20 rows and its new rows made
+trainable; a gradient mask keeps the original 5 frozen during training, and `merge_lora.py` restores
+them bit-exact from the base checkpoint regardless. Set `+num_new_speakers=0` to skip this and train
+a single-voice model instead — measurably better WER, no voice selection (see Results).
 
 Hebrew is a 16th tokenizer appended to the checkpoint's 15, so pretrained token IDs keep their
 offsets. Four things that were not obvious and cost real debugging time:

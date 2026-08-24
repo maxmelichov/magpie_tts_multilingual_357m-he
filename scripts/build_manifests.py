@@ -59,6 +59,8 @@ def wav_duration(path: Path):
 
 # Symbols the Hebrew IPA tokenizer knows. Rows containing anything else are
 # dropped: they are mojibake, stray orthography, or foreign-script leakage.
+NUM_BASE_SPEAKERS = 5   # Aria, Jason, John, Leo, Sofia
+
 ALLOWED_CHARS = set("abdefhijklmnoprstuvzɡʁʃʔχˈ" + " ,.?!")
 
 
@@ -89,7 +91,8 @@ def load_rows(csv_path: Path, text_col: str, max_wer: float, require_wer_score: 
     return rows
 
 
-def build_dataset(name, audio_dir: Path, csv_path: Path, text_col: str, args, out_dir: Path):
+def build_dataset(name, audio_dir: Path, csv_path: Path, text_col: str, args, out_dir: Path,
+                  speaker_index: int = None):
     # MagpieTTS picks ONE context source: magpietts.py does
     #   context_embedded = torch.where(has_text_context, text_ctx, audio_ctx)
     # and has_text_context is True whenever the manifest carries a "context_text"
@@ -125,6 +128,11 @@ def build_dataset(name, audio_dir: Path, csv_path: Path, text_col: str, args, ou
         ctx = rng.choice(ctx_pool)
         while ctx is e and len(ctx_pool) > 1:
             ctx = rng.choice(ctx_pool)
+        if speaker_index is not None:
+            # MagpieTTSDataset reads this straight off the manifest line and uses it
+            # to index the baked speaker embedding -- the only voice control this
+            # architecture has, since the context encoder is not in the weights.
+            e["speaker_index"] = speaker_index
         e["context_audio_filepath"] = ctx["audio_filepath"]
         e["context_audio_duration"] = ctx["duration"]
         if args.context_text == "speaker":
@@ -172,6 +180,10 @@ def main():
     if args.include_slow44k:
         datasets.update(SLOW44K_DATASETS)
 
+    # Baked speaker slots: the checkpoint ships 5 pretrained voices, so Hebrew
+    # speakers occupy indices 5.. and never overwrite the originals.
+    speaker_index = {n: NUM_BASE_SPEAKERS + i for i, n in enumerate(sorted(datasets))}
+
     results = []
     for name, (audio_rel, csv_rel, text_col) in datasets.items():
         audio_dir = args.data_root / audio_rel
@@ -179,9 +191,15 @@ def main():
         if not csv_path.exists() or not audio_dir.is_dir():
             print(f"[{name}] SKIP: missing {csv_path if not csv_path.exists() else audio_dir}", file=sys.stderr)
             continue
-        r = build_dataset(name, audio_dir, csv_path, text_col, args, args.out_dir)
+        r = build_dataset(name, audio_dir, csv_path, text_col, args, args.out_dir,
+                          speaker_index=speaker_index[name])
         if r:
             results.append(r)
+
+    smap = args.out_dir / "speaker_index.json"
+    with open(smap, "w", encoding="utf-8") as f:
+        json.dump({n: speaker_index[n] for n in sorted(datasets)}, f, indent=2)
+    print(f"Wrote speaker index map -> {smap}")
 
     index = args.out_dir / "datasets.json"
     with open(index, "w", encoding="utf-8") as f:
