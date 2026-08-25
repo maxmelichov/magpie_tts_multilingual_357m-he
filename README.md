@@ -46,23 +46,49 @@ transcripts) — training was masked to the 33 new Hebrew embedding rows only.
 
 ## Usage
 
+### Inference
+
+The model takes IPA phonemes, not Hebrew letters — there is no G2P inside it.
+The Hub repo is private; `hf auth login` as an account that has been granted access.
+
 ```bash
-bash scripts/setup.sh                          # venv + NeMo + base checkpoint
-venv/bin/python scripts/build_manifests.py     # manifests from the Hebrew CSVs
-bash scripts/train_hebrew.sh +num_new_speakers=15   # train (both GPUs); 0 for single-voice instead
+bash scripts/setup.sh   # venv + NeMo (needed by scripts/infer_hebrew.py)
+venv/bin/hf download notmax123/magpie_tts_multilingual_357m-he --local-dir checkpoints/hebrew
+# magpie_hebrew.ckpt, hparams.yaml, tokenizer assets under assets/
+```
 
-venv/bin/python scripts/merge_lora.py \
-  --ckpt experiments/Magpie-TTS/checkpoints/<best>.ckpt --out merged.ckpt
+A local `release/` dir (`model.ckpt` + `hparams.yaml`, gitignored) is the same portable
+bundle — point `--checkpoint` / `--hparams` at it instead of the Hub files.
 
+Phonemize with [RenikudPlus](https://huggingface.co/notmax123/RenikudPlus) (`tools/renikud/`).
+Strip nikud first — it predicts the diacritics itself and mangles pre-pointed input.
+
+```bash
+venv/bin/hf download notmax123/RenikudPlus model_int8.onnx --local-dir tools/renikud
+venv/bin/pip install onnxruntime
+venv/bin/python -c "
+import sys; sys.path.insert(0, 'tools/renikud')
+from renikud_onnx import G2P
+print(G2P('tools/renikud/model_int8.onnx').phonemize('שלום, מה שלומך?'))
+"
+# ʃalˈom, mˈa ʃlomχˈa?
+```
+
+Then synthesize:
+
+```bash
 venv/bin/python scripts/infer_hebrew.py \
-  --checkpoint merged.ckpt --hparams experiments/Magpie-TTS/version_0/hparams.yaml \
+  --checkpoint checkpoints/hebrew/magpie_hebrew.ckpt \
+  --hparams checkpoints/hebrew/hparams.yaml \
   --speaker-index 13 \
   --text "ʃalˈom, mˈa ʃlomχˈa?" --context-audio <any 10s+ wav> --out-dir outputs/
 ```
 
 `--speaker-index` is the only voice control (see Limitations); `--context-audio` is required by
-the plumbing but does not change the voice. Indices 0-4 are the released voices (Aria, Jason, John,
-Leo, Sofia), unaffected by this fine-tune. 5-19 are the Hebrew voices added here:
+the plumbing but does **not** change the voice (the `context_encoder` was removed). The clip
+must be >= 10s. `--gpu` selects the CUDA device (script default is `1`). Indices 0-4 are the
+released NVIDIA voices (Aria, Jason, John, Leo, Sofia), unaffected by this fine-tune. 5-19 are
+the Hebrew voices added here:
 
 | index | name |
 |---|---|
@@ -82,10 +108,26 @@ Leo, Sofia), unaffected by this fine-tune. 5-19 are the Hebrew voices added here
 | 18 | voice2 |
 | 19 | voice3 |
 
-Phonemize with [RenikudPlus](https://huggingface.co/notmax123/RenikudPlus) (`tools/renikud/`). Supported symbols (27):
+Supported IPA symbols (27):
 
 ```
 a b d e f h i j k l m n o p r s t u v z ɡ ʁ ʃ ʔ χ ˈ   plus  , . ? !
+```
+
+### Training
+
+```bash
+bash scripts/setup.sh                          # venv + NeMo + base checkpoint
+venv/bin/python scripts/build_manifests.py     # manifests from the Hebrew CSVs
+bash scripts/train_hebrew.sh +num_new_speakers=15   # train (both GPUs); 0 for single-voice instead
+
+venv/bin/python scripts/merge_lora.py \
+  --ckpt experiments/Magpie-TTS/checkpoints/<best>.ckpt --out merged.ckpt
+
+venv/bin/python scripts/infer_hebrew.py \
+  --checkpoint merged.ckpt --hparams experiments/Magpie-TTS/version_0/hparams.yaml \
+  --speaker-index 13 \
+  --text "ʃalˈom, mˈa ʃlomχˈa?" --context-audio <any 10s+ wav> --out-dir outputs/
 ```
 
 ## Evaluation
