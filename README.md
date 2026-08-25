@@ -49,7 +49,6 @@ transcripts) — training was masked to the 33 new Hebrew embedding rows only.
 ### Inference
 
 The model takes IPA phonemes, not Hebrew letters — there is no G2P inside it.
-The Hub repo is private; `hf auth login` as an account that has been granted access.
 
 ```bash
 bash scripts/setup.sh   # venv + NeMo (needed by scripts/infer_hebrew.py)
