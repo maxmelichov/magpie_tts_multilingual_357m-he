@@ -1,6 +1,6 @@
 # MagpieTTS Multilingual 357M — Hebrew
 
-<img src="assets/banner.jpg" alt="MagpieTTS Hebrew" width="100%">
+<img src="assets/banner-v2.jpg" alt="MagpieTTS Hebrew" width="100%">
 
 Hebrew fine-tune of [nvidia/magpie_tts_multilingual_357m](https://huggingface.co/nvidia/magpie_tts_multilingual_357m).
 **Input is IPA, not Hebrew letters** — there is no G2P in the model, you pass phonemes.
