@@ -13,6 +13,8 @@ Model: [notmax123/magpie_tts_multilingual_357m-he](https://huggingface.co/notmax
 recorded Hebrew, not in our training data. Every metric sits next to the same metric on the **real
 recordings**, because the ASR has its own error rate.
 
+<img src="assets/hebrew_wer_chart.png" alt="Hebrew WER chart" width="100%">
+
 | voice (speaker_index) | Hebrew WER | IPA WER |
 |---|---|---|
 | male2 (13) | 10.9% | 5.6% |
