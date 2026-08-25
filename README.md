@@ -9,30 +9,10 @@ Model: [notmax123/magpie_tts_multilingual_357m-he](https://huggingface.co/notmax
 
 ## Results
 
-1,525 utterances of [Phonikud/ILSpeech](https://huggingface.co/datasets/Phonikud/ILSpeech) — real
-recorded Hebrew, not in our training data. Every metric sits next to the same metric on the **real
-recordings**, because the ASR has its own error rate.
+IPA WER on 1,525 held-out utterances of [Phonikud/ILSpeech](https://huggingface.co/datasets/Phonikud/ILSpeech),
+scored by [notmax123/whisper-he-ipa](https://huggingface.co/notmax123/whisper-he-ipa).
 
-<img src="assets/run4_ipa_wer_chart.png" alt="Run 4 Hebrew IPA WER chart" width="100%">
-
-| voice (speaker_index) | Hebrew WER | IPA WER |
-|---|---|---|
-| male2 (13) | 10.9% | 5.6% |
-| female5 (10) | 11.0% | 6.2% |
-| voice2 (18) | 11.5% | 7.6% |
-| real recordings | 10.2% | 3.8% |
-
-Reading Hebrew works, within 0.7-1.3 points of human WER depending on voice. Stress placement is
-correct on 99.7% of phonemically-correct words (human recordings: 99.5%) — the IPA metrics above
-include stress, since scoring without it discards a real quality signal.
-ASR models used: `ivrit-ai/whisper-large-v3-turbo` (Hebrew), `notmax123/whisper-he-ipa` (IPA).
-
-**Voice selection costs ~1 point of WER against the single-voice version of this model.** An earlier
-checkpoint with one unconditioned voice per speaker scored 10.4%/5.4% (Hebrew/IPA WER) — measurably
-better, confirmed on the full 1,525-utterance set with a paired bootstrap (Hebrew WER delta -0.36%,
-95% CI [-0.65, -0.06]). Splitting one shared voice into 15 selectable ones gives each less training
-signal. This checkpoint trades that for usable voice control; if you need the best possible WER and
-don't need voice selection, train with `+num_new_speakers=0`.
+<img src="assets/ipa_wer_chart.png" alt="IPA WER for notmax123/magpie_tts_multilingual_357m-he" width="100%">
 
 ## Limitations
 

@@ -107,7 +107,23 @@ def extract_nemo(nemo_path: str, out_dir: Path) -> Path:
     return out_dir
 
 
-def build_tokenizer_roster(extracted: Path, hebrew_name: str = "hebrew_chartokenizer"):
+def load_extra_tokenizers(spec_path):
+    """Extra per-language IPA char tokenizers, from a JSON spec.
+
+    {"<name>": {"chars": "...", "punct": [","...], "donor": "<base tokenizer>"}}
+
+    Used by run 5, which adds IPA tokenizers for languages the base model ALREADY
+    supports (en/de/it/es) so an IPA LoRA can be compared head-to-head against the
+    base model's own g2p pipeline on the same audio.
+    """
+    import json as _json
+    if not spec_path:
+        return {}
+    return _json.loads(Path(spec_path).read_text(encoding="utf-8"))
+
+
+def build_tokenizer_roster(extracted: Path, hebrew_name: str = "hebrew_chartokenizer",
+                           extra_spec=None):
     """The checkpoint's exact text_tokenizers (artifact paths resolved), with a
     new byte-level Hebrew tokenizer appended LAST so all pretrained token-ID
     offsets are preserved."""
@@ -135,6 +151,18 @@ def build_tokenizer_roster(extracted: Path, hebrew_name: str = "hebrew_chartoken
         "pad_with_space": False,
         "non_default_punct_list": list(HEBREW_IPA_PUNCT),
     }
+    # Extra IPA tokenizers append AFTER Hebrew, so every previously assigned
+    # token-ID offset (base 15 + Hebrew) is preserved.
+    for name, spec in (extra_spec or {}).items():
+        assert name not in tokenizers, f"tokenizer name collision: {name}"
+        tokenizers[name] = {
+            "_target_": "nemo.collections.common.tokenizers.text_to_speech.tts_tokenizers.BaseCharsTokenizer",
+            "chars": spec["chars"],
+            "punct": True,
+            "apostrophe": False,
+            "pad_with_space": False,
+            "non_default_punct_list": list(spec.get("punct", [",", ".", "?", "!"])),
+        }
     return OmegaConf.create(tokenizers)
 
 
@@ -160,6 +188,46 @@ def _donor_token_rows(agg, name):
     toks = list(tok.tokens) if hasattr(tok, "tokens") else list(tok.get_vocab().keys())
     off = agg.tokenizer_offsets[name]
     return {str(t): off + i for i, t in enumerate(toks)}
+
+
+def init_extra_token_embeddings(model, extra_spec):
+    """Seed each extra IPA tokenizer from the base model's matching language.
+
+    en_ipa seeds from english_phoneme, de_ipa from german_phoneme, and so on, so
+    a symbol the model already pronounces starts from the embedding it already
+    learned rather than from noise.
+    """
+    if not extra_spec:
+        return
+    agg = model.tokenizer
+    emb = model.text_embedding.weight.data
+    for name, spec in extra_spec.items():
+        if name not in agg.tokenizer_offsets:
+            continue
+        off = agg.tokenizer_offsets[name]
+        toks = [str(t) for t in agg.tokenizers[name].tokens]
+        order = [spec.get("donor")] + IPA_DONORS
+        donors = {}
+        for d in order:
+            if d and d in agg.tokenizers and d not in donors:
+                donors[d] = _donor_token_rows(agg, d)
+        hit, miss = 0, []
+        for i, tok in enumerate(toks):
+            for rows in donors.values():
+                if tok in rows:
+                    emb[off + i] = emb[rows[tok]].clone()
+                    hit += 1
+                    break
+            else:
+                miss.append(tok)
+        if miss:
+            target = emb[:off].norm(dim=1).mean()
+            for i, tok in enumerate(toks):
+                if tok in miss:
+                    row = emb[off + i]
+                    emb[off + i] = row * (target / row.norm().clamp_min(1e-6))
+        logging.info(f"{name}: seeded {hit}/{len(toks)} from {spec.get('donor')} (+fallbacks); "
+                     f"no donor: {''.join(miss) if miss else 'none'}")
 
 
 def init_new_token_embeddings(model, hebrew_name="hebrew_chartokenizer"):
@@ -242,23 +310,33 @@ def extend_baked_speakers(model, n_new: int, seed_noise: float = 0.15):
                  f"original {n_old} frozen)")
 
 
-def freeze_pretrained_embedding_rows(model, hebrew_name="hebrew_chartokenizer"):
-    """Let gradients reach only the new Hebrew rows of text_embedding.
+def freeze_pretrained_embedding_rows(model, new_tokenizers=("hebrew_chartokenizer",)):
+    """Let gradients reach only the NEW tokenizers' rows of text_embedding.
 
-    text_embedding is shared across all 16 languages. Leaving the whole table
-    trainable lets Hebrew training drag the other 15 languages' phoneme
-    embeddings around, and BOS/EOS with them. A gradient mask keeps the new rows
-    learnable while every pretrained row stays exactly as released.
+    text_embedding is shared across every language. Leaving the whole table
+    trainable lets this run drag the base model's phoneme embeddings around, and
+    BOS/EOS with them. A gradient mask keeps the new rows learnable while every
+    pretrained row stays exactly as released.
+
+    Every added tokenizer must be listed: masking only Hebrew while also adding
+    en/de/it/es IPA tokenizers silently froze those 231 rows, so they could never
+    learn anything.
     """
     agg = model.tokenizer
-    start = agg.tokenizer_offsets[hebrew_name]
-    n_new = agg.num_tokens_per_tokenizer[hebrew_name]
     w = model.text_embedding.weight
     mask = torch.zeros(w.shape[0], 1)
-    mask[start: start + n_new] = 1.0          # BOS/EOS stay frozen: they are pretrained
+    spans = []
+    for name in new_tokenizers:
+        if name not in agg.tokenizer_offsets:
+            continue
+        start = agg.tokenizer_offsets[name]
+        n = agg.num_tokens_per_tokenizer[name]
+        mask[start: start + n] = 1.0          # BOS/EOS stay frozen: they are pretrained
+        spans.append(f"{name}[{start}, {start + n})")
+    trainable = int(mask.sum().item())
     w.register_hook(lambda grad, m=mask: grad * m.to(grad.device, grad.dtype))
-    logging.info(f"text_embedding: training rows [{start}, {start + n_new}) only; "
-                 f"{w.shape[0] - n_new} pretrained rows frozen (incl. BOS/EOS)")
+    logging.info(f"text_embedding: training {trainable} rows -- {', '.join(spans)}; "
+                 f"{w.shape[0] - trainable} pretrained rows frozen (incl. BOS/EOS)")
 
 
 def load_pretrained_weights(model: MagpieTTSModel, extracted: Path, seed_from_ipa: bool = True):
@@ -321,7 +399,8 @@ def main(cfg):
     with open_dict(cfg):
         cfg.model = OmegaConf.create(ckpt_model)
         # The checkpoint's full tokenizer roster + Hebrew appended last.
-        cfg.model.text_tokenizers = build_tokenizer_roster(extracted)
+        extra_spec = load_extra_tokenizers(cfg.get("extra_tokenizers_json"))
+        cfg.model.text_tokenizers = build_tokenizer_roster(extracted, extra_spec=extra_spec)
         del cfg["init_from_nemo_model"]  # weights are loaded manually below
 
     logging.info('\nConfig Params:\n%s', OmegaConf.to_yaml(cfg, resolve=True))
@@ -332,6 +411,7 @@ def main(cfg):
     model = MagpieTTSModel(cfg=cfg.model, trainer=trainer)
     load_pretrained_weights(model, extracted,
                             seed_from_ipa=bool(cfg.get("seed_hebrew_from_ipa", True)))
+    init_extra_token_embeddings(model, extra_spec)
 
     lora_cfg = cfg.get("lora", OmegaConf.create({}))
     r = int(lora_cfg.get("r", 16))
@@ -347,7 +427,8 @@ def main(cfg):
         extend_baked_speakers(model, n_new_spk)
         freeze_non_lora(model, extra_trainable)   # re-apply: the table was replaced
     if bool(cfg.get("freeze_pretrained_embeddings", True)):
-        freeze_pretrained_embedding_rows(model)
+        freeze_pretrained_embedding_rows(
+            model, ["hebrew_chartokenizer"] + list((extra_spec or {}).keys()))
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())

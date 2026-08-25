@@ -5,6 +5,9 @@ import sys
 from pathlib import Path
 
 index = Path(sys.argv[1] if len(sys.argv) > 1 else "data/manifests/datasets.json")
+# Second arg is either one tokenizer for every dataset, or "per-language" to use
+# "<name>_ipa_chartokenizer" (run 5 trains four languages at once, each with its
+# own IPA tokenizer).
 tokenizer = sys.argv[2] if len(sys.argv) > 2 else "hebrew_chartokenizer"
 
 args = []
@@ -17,6 +20,6 @@ for d in json.loads(index.read_text()):
             f"+{key}.audio_dir={audio_dir}",
             f"+{key}.feature_dir={audio_dir}",
             f"+{key}.sample_weight=1.0",
-            f"+{key}.tokenizer_names=[{tokenizer}]",
+            f"+{key}.tokenizer_names=[{name + '_ipa_chartokenizer' if tokenizer == 'per-language' else tokenizer}]",
         ]
 print("\n".join(args))
